@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -18,21 +19,50 @@ AUTH_LOCK = threading.Lock()
 AUDIO_LOCK = threading.Lock()
 client = Client()
 auth = {'state': 'not_logged_in'}
+saved_session = {}
 
 
 def restore():
-    global client
+    global client, saved_session
     try:
-        token = keyring.get_password('BlockRadio-Yandex', 'local-user')
-        if token:
-            client = Client(token).init()
+        stored = keyring.get_password('BlockRadio-Yandex', 'session')
+        if stored:
+            saved_session = json.loads(stored)
+        else:
+            token = keyring.get_password('BlockRadio-Yandex', 'local-user')
+            saved_session = {'access_token': token} if token else {}
+        if saved_session.get('access_token'):
+            client = Client(saved_session['access_token'])
+            ensure_session()
+            client.init()
             auth['state'] = 'ready'
     except Exception:
-        auth['state'] = 'not_logged_in'
+        # Retain secure storage on network failures; do not delete a recoverable session.
+        auth['state'] = 'retry'
+
+
+def ensure_session():
+    global client, saved_session
+    if not saved_session.get('refresh_token') or saved_session.get('expires_at', float('inf')) > time.time()+60:
+        return
+    # Use the same device-flow application as the pinned library; no secrets copied into this project.
+    from yandex_music._client import device_auth
+    with API_LOCK:
+        result = client._request.post('https://oauth.yandex.ru/token', {
+            'grant_type': 'refresh_token', 'refresh_token': saved_session['refresh_token'],
+            'client_id': device_auth._DEFAULT_CLIENT_ID, 'client_secret': device_auth._DEFAULT_CLIENT_SECRET})
+        updated = dict(saved_session, access_token=result['access_token'],
+                       expires_at=time.time()+int(result.get('expires_in', 3600)))
+        if result.get('refresh_token'):
+            updated['refresh_token'] = result['refresh_token']
+        keyring.set_password('BlockRadio-Yandex', 'session', json.dumps(updated))
+        saved_session = updated
+        client = Client(updated['access_token']).init()
+        auth['state'] = 'ready'
 
 
 def login_worker():
-    global client
+    global client, saved_session
     if not AUTH_LOCK.acquire(blocking=False):
         return
     try:
@@ -50,7 +80,12 @@ def login_worker():
         with API_LOCK:
             client = candidate
         try:
-            keyring.set_password('BlockRadio-Yandex', 'local-user', token.access_token)
+            saved_session = {'access_token': token.access_token}
+            if token.refresh_token:
+                saved_session['refresh_token'] = token.refresh_token
+            if token.expires_in:
+                saved_session['expires_at'] = time.time() + token.expires_in
+            keyring.set_password('BlockRadio-Yandex', 'session', json.dumps(saved_session))
             saved = True
         except Exception:
             saved = False  # No plaintext token fallback.
@@ -64,6 +99,7 @@ def login_worker():
 
 
 def search_tracks(query, page):
+    ensure_session()
     with API_LOCK:
         result = client.search(query, type_='track', page=page)
     found = result.tracks.results if result and result.tracks else []
@@ -73,6 +109,7 @@ def search_tracks(query, page):
 
 
 def audio_wave(track_id):
+    ensure_session()
     if auth.get('state') != 'ready':
         raise ValueError('Сначала войди через кнопку «Войти в Яндекс».')
     with API_LOCK:
@@ -189,3 +226,4 @@ if __name__ == '__main__':
         ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
     except KeyboardInterrupt:
         pass
+

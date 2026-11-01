@@ -4,6 +4,10 @@
 *.token
 secrets.json
 config/secrets.json
+client_secret*.json
+credentials*.json
+token.json
+tokens.json
 
 # Java / Gradle
 build/
@@ -30,3 +34,10 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+
+# Packaged helper and local account paths
+dist/
+*.spec
+google-path.txt
+backend.lock

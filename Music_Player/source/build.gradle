@@ -1,5 +1,5 @@
 plugins { id 'fabric-loom' version '1.7.4'; id 'maven-publish' }
-version = '0.2.0'
+version = '0.4.0'
 group = 'dev.krys'
 loom { mixin { defaultRefmapName = 'blockradio-refmap.json' } }
 base { archivesName = 'blockradio' }
@@ -12,3 +12,12 @@ dependencies {
 }
 java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17; withSourcesJar() }
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.release = 17 }
+
+
+processResources { from("../bridge/dist") { include "blockradio-backend.exe"; into "backend" } }
+
+dependencies {
+ testImplementation 'org.junit.jupiter:junit-jupiter:5.10.3'
+ testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+test { useJUnitPlatform() }

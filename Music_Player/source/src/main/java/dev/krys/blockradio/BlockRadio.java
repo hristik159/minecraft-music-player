@@ -1,113 +1,110 @@
 package dev.krys.blockradio;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.networking.v1.*;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.*;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
+import net.minecraft.util.math.BlockPos;
 import com.google.gson.*;
-import java.net.URI;
-import java.net.http.*;
-import java.time.Duration;
 import java.io.ByteArrayInputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.*;
 import javax.sound.sampled.*;
 
 public class BlockRadio implements ClientModInitializer {
- static final HttpClient HTTP=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
- static final String BASE="http://127.0.0.1:18743";
+ static final ExecutorService IO=Executors.newFixedThreadPool(4,r->{Thread t=new Thread(r,"BlockRadio-IO");t.setDaemon(true);return t;});
  static volatile Clip clip;
  static volatile double volume=.6;
- static volatile String playing="";
- static volatile long generation;
- static net.minecraft.util.math.BlockPos source;
- static String trackId="",sourceDimension="";
- static volatile long targetMs,receivedAt;
- static volatile boolean paused;
- static volatile double attenuation;
- static volatile boolean loading;
- static int retry;
- static String currentTitle="";
- static long revision;
- static java.util.function.Consumer<String> feedback=message->{};
- static void command(net.minecraft.util.math.BlockPos pos,String action,String id,String title,long seek){
-  if(!net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.canSend(RadioServer.CHANNEL)){
-   feedback.accept("На сервере нужен BlockRadio 0.2.0.");return;
-  }
-  var b=net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();
-  b.writeString(action,16);b.writeBlockPos(pos);b.writeString(id,40);
-  b.writeString(title.length()>200?title.substring(0,200):title,200);b.writeLong(seek);
-  net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(RadioServer.CHANNEL,b);
+ static volatile Track current;
+ static volatile String status="",playing="";
+ static volatile long generation,revision=-1,targetMs,receivedAt,endedRevision=-1,recommendRevision=-1;
+ static volatile boolean paused,autoplay=true,controller,loading,videoUpdate;
+ static volatile List<Track> queue=List.of();
+ static volatile List<Track> candidates=List.of();
+ static volatile JsonObject accounts=new JsonObject();
+ static int ticks;
+ static KeyBinding miniKey,openKey;
+ static boolean hudVisible=true;
+ static UUID sourcePlayerUUID;
+ static double distanceVolume=0;
+ static java.util.function.Consumer<String> feedback=m->status=m;
+ public static void background(String name,Runnable task){IO.execute(task);}
+ static long target(){return targetMs+(paused?0:(System.nanoTime()-receivedAt)/1000000);}
+ static JsonObject get(String route)throws Exception{return BackendManager.get(route);}
+ static void command(String action,Track track){
+  var mc=MinecraftClient.getInstance();if(mc.getNetworkHandler()==null||!ClientPlayNetworking.canSend(RadioServer.CHANNEL)){status="У всех игроков и на сервере нужен BlockRadio 0.3.";return;}
+  JsonObject j=new JsonObject();j.addProperty("action",action);j.addProperty("revision",revision);if(track!=null)j.add("track",track.json());send(j);
  }
- static long target(){return targetMs+(paused?0:(System.nanoTime()-receivedAt)/1_000_000);}
- static synchronized void syncClip(){
-  if(clip==null)return;
-  long us=Math.min(clip.getMicrosecondLength(),Math.max(0,target()*1000));
-  if(Math.abs(clip.getMicrosecondPosition()-us)>750000)clip.setMicrosecondPosition(us);
-  if(paused||attenuation<=0||volume<=0)clip.stop();else if(us<clip.getMicrosecondLength()&&!clip.isRunning())clip.start();
- }
-
- @Override public void onInitializeClient() {
-  Runtime.getRuntime().addShutdownHook(new Thread(BlockRadio::stop));
-  net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(RadioServer.CHANNEL,(mc,handler,b,sender)->{
-   boolean active=b.readBoolean();
-   if(!active){mc.execute(()->{stop();trackId="";source=null;playing="";});return;}
-   var pos=b.readBlockPos();String dimension=b.readString(200);String id=b.readString(40),title=b.readString(200);
-   long rev=b.readLong();long time=b.readLong();boolean pause=b.readBoolean();
-   mc.execute(()->{
-    targetMs=time;receivedAt=System.nanoTime();paused=pause;
-    boolean changed=rev!=revision||!id.equals(trackId)||!pos.equals(source);revision=rev;
-    source=pos;sourceDimension=dimension;currentTitle=title;
-    if(changed){trackId=id;attenuation=0;load(id,title,message->feedback.accept(message));}
-    else syncClip();
-   });
-  });
-  net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register((handler,mc)->{stop();source=null;trackId="";playing="";});
-  net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(mc->{
-   if(source==null||mc.player==null||mc.world==null){attenuation=0;setVolume(volume);return;}
-   double distance=Math.sqrt(mc.player.squaredDistanceTo(source.getX()+.5,source.getY()+.5,source.getZ()+.5));
-   attenuation=RadioMath.attenuation(distance);
-   attenuation*=mc.options.getSoundVolume(net.minecraft.sound.SoundCategory.MASTER)*mc.options.getSoundVolume(net.minecraft.sound.SoundCategory.RECORDS);
-   if(!mc.world.getRegistryKey().getValue().toString().equals(sourceDimension)||!mc.world.getBlockState(source).isOf(net.minecraft.block.Blocks.JUKEBOX))attenuation=0;
-   setVolume(volume);syncClip();
-   if(clip==null&&!loading&&++retry>=200){retry=0;load(trackId,currentTitle,message->feedback.accept(message));}
+ static void send(JsonObject j){var mc=MinecraftClient.getInstance();mc.execute(()->{if(mc.getNetworkHandler()!=null&&ClientPlayNetworking.canSend(RadioServer.CHANNEL)){var b=net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();b.writeString(j.toString(),32767);ClientPlayNetworking.send(RadioServer.CHANNEL,b);}});}
+ static void seek(long position){endedRevision=-1;JsonObject j=new JsonObject();j.addProperty("action","seek");j.addProperty("position",position);send(j);}
+ static void toggleAutoplay(){JsonObject j=new JsonObject();j.addProperty("action","autoplay");j.addProperty("enabled",!autoplay);send(j);}
+ static void action(String route,String provider){background("action",()->{try{JsonObject j=new JsonObject();j.addProperty("provider",provider);BackendManager.post(route,j);refreshAccounts();}catch(Exception e){status=e.getMessage();}});}
+ static void refreshAccounts(){try{accounts=get("/accounts");}catch(Exception e){status=e.getMessage();}}
+ @Override public void onInitializeClient(){
+  BackendManager.start();Runtime.getRuntime().addShutdownHook(new Thread(()->{stop();BackendManager.close();}));
+  ClientLifecycleEvents.CLIENT_STOPPING.register(mc->{stop();BackendManager.close();IO.shutdownNow();});
+  net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback.EVENT.register((d,delta)->{var mc=MinecraftClient.getInstance();if(hudVisible&&mc.currentScreen==null&&!mc.options.hudHidden&&current!=null)RadioScreen.drawHud(d,mc);});
+  openKey=KeyBindingHelper.registerKeyBinding(new KeyBinding("Открыть BlockRadio",InputUtil.Type.KEYSYM,66,"category.blockradio"));
+  miniKey=KeyBindingHelper.registerKeyBinding(new KeyBinding("key.blockradio.mini",InputUtil.Type.KEYSYM,77,"category.blockradio"));
+  ClientPlayNetworking.registerGlobalReceiver(RadioServer.CHANNEL,(mc,handler,buf,sender)->{String raw=buf.readString(262144);mc.execute(()->receive(JsonParser.parseString(raw).getAsJsonObject()));});
+  ClientPlayConnectionEvents.DISCONNECT.register((handler,mc)->{stop();current=null;queue=List.of();pushVideo();});
+  ClientTickEvents.END_CLIENT_TICK.register(mc->{
+   while(miniKey.wasPressed())hudVisible=!hudVisible;
+   while(openKey.wasPressed())mc.setScreen(new RadioScreen(null));
+   updateDistance();
+   syncClip();
+   if(++ticks%40==0&&BackendManager.ready){background("accounts",BlockRadio::refreshAccounts);pushVideo();}
+   if(current!=null&&current.provider().equals("yandex")&&clip==null&&!loading&&ticks%200==0&&BackendManager.ready)load(current);
+   if(controller&&current!=null&&!paused&&clip!=null&&clip.getMicrosecondLength()>0&&clip.getMicrosecondPosition()>=clip.getMicrosecondLength()-10000&&endedRevision!=revision){endedRevision=revision;command("ended",null);}
   });
  }
- static void background(String name,Runnable task) {Thread t=new Thread(task,name);t.setDaemon(true);t.start();}
- static JsonObject get(String route) throws Exception {
-  var req=HttpRequest.newBuilder(URI.create(BASE+route)).header("X-BlockRadio","1").timeout(Duration.ofSeconds(35)).GET().build();
-  var res=HTTP.send(req,HttpResponse.BodyHandlers.ofString());
-  var json=JsonParser.parseString(res.body()).getAsJsonObject();
-  if(res.statusCode()!=200) throw new Exception(json.has("error")?json.get("error").getAsString():"HTTP "+res.statusCode());
-  return json;
+ static void receive(JsonObject j){
+  String source=Track.s(j,"sourcePlayerUUID");sourcePlayerUUID=source.isEmpty()?null:UUID.fromString(source);
+  long rev=j.get("revision").getAsLong();targetMs=j.get("position").getAsLong();receivedAt=System.nanoTime();paused=j.get("paused").getAsBoolean();autoplay=j.get("autoplay").getAsBoolean();controller=j.get("controller").getAsBoolean();
+  ArrayList<Track> nextQueue=new ArrayList<>();for(var x:j.getAsJsonArray("queue"))nextQueue.add(Track.parse(x.getAsJsonObject()));queue=List.copyOf(nextQueue);
+  if(!j.get("active").getAsBoolean()){stop();current=null;revision=rev;pushVideo();return;}
+  Track t=Track.parse(j.getAsJsonObject("track"));boolean changed=rev!=revision||current==null||!t.id().equals(current.id())||!t.provider().equals(current.provider());revision=rev;current=t;playing=t.title();
+  if(changed){stop();endedRevision=-1;if(t.provider().equals("yandex"))load(t);else status="YouTube: откройте видимый видеоплеер кнопкой Видео.";}
+  syncClip();pushVideo();
+  if(j.get("recommend").getAsBoolean()&&recommendRevision!=rev){recommendRevision=rev;recommend(t,rev);}
  }
- static synchronized void stop() { generation++; loading=false; if(clip!=null){clip.stop();clip.close();clip=null;} }
- static void load(String id,String title,java.util.function.Consumer<String> status) {
-  stop();loading=true;retry=0; final long job=generation;
-  background("BlockRadio-audio",()->{
-   try {
-    status.accept("Загрузка аудио…");
-    var req=HttpRequest.newBuilder(URI.create(BASE+"/audio?id="+id)).header("X-BlockRadio","1").timeout(Duration.ofSeconds(120)).GET().build();
-    var res=HTTP.send(req,HttpResponse.BodyHandlers.ofByteArray());
-    if(res.statusCode()!=200) throw new Exception(JsonParser.parseString(new String(res.body(),java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject().get("error").getAsString());
-    try(var stream=AudioSystem.getAudioInputStream(new ByteArrayInputStream(res.body()))) {
-     synchronized(BlockRadio.class) {
-      if(job!=generation)return;
-      Clip next=AudioSystem.getClip();
-      try { next.open(stream); if(!next.isControlSupported(FloatControl.Type.MASTER_GAIN))throw new Exception("Звуковое устройство не поддерживает регулировку громкости."); } catch(Exception e) {next.close();throw e;}
-      clip=next; playing=title; setVolume(volume);syncClip();
-     }
-    }
-    status.accept("Общий трек. Радиус слышимости: 32 блока.");
-   } catch(Exception e){if(job==generation){
-     String message="BlockRadio: "+e.getMessage();status.accept(message);
-     var mc=net.minecraft.client.MinecraftClient.getInstance();
-     mc.execute(()->{if(mc.player!=null)mc.player.sendMessage(net.minecraft.text.Text.literal(message),true);});
-    }} finally {if(job==generation)loading=false;}
-  });
+ static void recommend(Track previous,long rev){background("autoplay",()->{
+  try{
+   Track next=null;
+   if(previous.provider().equals("yandex")){var list=get("/wave").getAsJsonArray("tracks");if(!list.isEmpty())next=Track.parse(list.get(0).getAsJsonObject());}
+   else{for(Track candidate:candidates)if(candidate.provider().equals("youtube")&&!candidate.id().equals(previous.id())){next=candidate;break;}}
+   if(revision!=rev)return;
+   if(next==null){status="Нет следующего трека. Добавьте видео в очередь или выполните поиск.";command("unavailable",null);}else{
+    Track selected=next;candidates=candidates.stream().filter(x->!x.id().equals(selected.id())).toList();command("recommend",selected);
+   }
+  }catch(Exception e){status="Autoplay: источник недоступен.";if(revision==rev)command("unavailable",null);}
+ });}
+ public static void onVideoEnded(long rev){MinecraftClient.getInstance().execute(()->{if(current!=null&&current.provider().equals("youtube")&&controller&&rev==revision&&endedRevision!=rev){endedRevision=rev;command("ended",null);}});}
+ static void pushVideo(){if(!BackendManager.ready||videoUpdate)return;videoUpdate=true;
+  JsonObject j=new JsonObject();Track t=current;j.addProperty("active",t!=null);if(t!=null){j.addProperty("provider",t.provider());j.addProperty("id",t.id());j.addProperty("title",t.title());j.addProperty("duration_ms",t.duration());}j.addProperty("revision",revision);j.addProperty("position",target());j.addProperty("paused",paused);j.addProperty("volume",volume*distanceVolume);
+  background("video",()->{try{BackendManager.post("/player/state",j);}catch(Exception ignored){}finally{videoUpdate=false;}});
  }
- static synchronized void setVolume(double value) {
-  volume=value;Clip c=clip;
-  if(c!=null && c.isOpen() && c.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
-   if(c.isControlSupported(BooleanControl.Type.MUTE))
-    ((BooleanControl)c.getControl(BooleanControl.Type.MUTE)).setValue(value*attenuation<=0);
-   FloatControl gain=(FloatControl)c.getControl(FloatControl.Type.MASTER_GAIN);
-   gain.setValue((float)Math.max(gain.getMinimum(),Math.min(gain.getMaximum(),20*Math.log10(Math.max(.0001,value*attenuation)))));
-  }
+ static synchronized void stop(){generation++;loading=false;if(clip!=null){clip.stop();clip.close();clip=null;}}
+ static void load(Track t){stop();loading=true;long job=generation;background("audio",()->{
+  try{byte[] bytes=BackendManager.audio(t.id());try(var stream=AudioSystem.getAudioInputStream(new ByteArrayInputStream(bytes))){synchronized(BlockRadio.class){if(job!=generation)return;Clip next=AudioSystem.getClip();try{next.open(stream);}catch(Exception e){next.close();throw e;}clip=next;setVolume(volume);syncClip();}}status="";}
+  catch(Exception e){if(job==generation)status=e.getMessage();}finally{if(job==generation)loading=false;}
+ });}
+ static synchronized void syncClip(){if(clip==null)return;long us=Math.min(clip.getMicrosecondLength(),Math.max(0,target()*1000));if(Math.abs(clip.getMicrosecondPosition()-us)>900000)clip.setMicrosecondPosition(us);if(paused)clip.stop();else if(us<clip.getMicrosecondLength()&&!clip.isRunning())clip.start();}
+ static void removeQueue(int index){JsonObject j=new JsonObject();j.addProperty("action","remove");j.addProperty("index",index);send(j);}
+ static void updateDistance(){
+  var mc=MinecraftClient.getInstance();double desired=0;
+  if(mc.player!=null&&sourcePlayerUUID!=null){if(sourcePlayerUUID.equals(mc.player.getUuid()))desired=1;else if(mc.world!=null){var source=mc.world.getPlayerByUuid(sourcePlayerUUID);if(source!=null)desired=RadioMath.attenuation(mc.player.distanceTo(source));}}
+  distanceVolume+=.25*(desired-distanceVolume);if(Math.abs(distanceVolume-desired)<.0001)distanceVolume=desired;
+  applyVolume();if(ticks%5==0)pushVideo();
  }
+ static synchronized void setVolume(double value){volume=Math.max(0,Math.min(1,value));applyVolume();pushVideo();}
+ static synchronized void applyVolume(){double effective=volume*distanceVolume;if(clip!=null&&clip.isOpen()){
+  if(clip.isControlSupported(BooleanControl.Type.MUTE))((BooleanControl)clip.getControl(BooleanControl.Type.MUTE)).setValue(effective==0);
+  if(clip.isControlSupported(FloatControl.Type.MASTER_GAIN)){FloatControl gain=(FloatControl)clip.getControl(FloatControl.Type.MASTER_GAIN);gain.setValue((float)Math.max(gain.getMinimum(),Math.min(gain.getMaximum(),20*Math.log10(Math.max(.0001,effective)))));}
+ } }
 }

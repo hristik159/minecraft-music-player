@@ -1,9 +1,14 @@
-BlockRadio 0.2.0 validation
-- Gradle 8.8 / Java 17 build and remap: PASS.
-- Minecraft 1.20.1, Fabric Loader 0.19.3, Fabric API 0.92.2+1.20.1.
-- Standalone Java distance checks: PASS (near, midpoint, boundary, far, monotonic).
-- Python bridge tests: 3 PASS (includes login link checks).
-- JAR common/client entrypoints and mixin namespace/refmap: PASS.
-- No two-client Minecraft session or real Yandex playback was run here.
-- Dedicated server runtime startup was not tested.
-- One active station per server, personal Yandex access required for each listener.
+BlockRadio 0.3.0 validation
+Baseline Actions run 41266827614 (commit 4f8f7b9): SUCCESS.
+- 18 Python tests: PASS on Windows Python 3.12.
+- Standalone windowed Windows EXE packaging: PASS.
+- Packaged EXE startup, authenticated health, accounts, shutdown and orphan check: PASS.
+- Gradle wrapper build, Java 17 / Minecraft 1.20.1 / Fabric: PASS.
+- Embedded EXE verification: PASS.
+
+Final follow-up: pagination, account avatar retrieval, wave feedback, automatic
+command handling and installation docs. Consult latest PR #1 check for its result.
+No live OAuth, real audio, Minecraft GUI or two-client Essential session was run.
+YouTube is a visible browser IFrame controlled from Minecraft, not an in-game browser.
+Local Gradle limitation: Loom Unix-domain socket probe denied by execution environment;
+Windows GitHub Actions is the build/packaging validation environment.
