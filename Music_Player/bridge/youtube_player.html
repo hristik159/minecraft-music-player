@@ -5,7 +5,7 @@
 <main><h1>BlockRadio · YouTube</h1><p id="status">Нажмите «Подключить», чтобы разрешить воспроизведение.</p>
 <button id="connect">Подключить</button><div id="player"></div>
 <p>Управление общей очередью — в Minecraft. Это окно должно оставаться видимым. При скрытии вкладки видео приостанавливается.</p>
-<label>Локальная громкость <input id="volume" type="range" min="0" max="100" value="60"></label>
+<label>Громкость с учётом расстояния <input id="volume" type="range" min="0" max="100" value="60" disabled></label>
 <p><a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">Условия YouTube</a> · <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Конфиденциальность Google</a></p>
 <small>После подключения YouTube получает данные воспроизведения и может использовать cookies и показывать рекламу. Пароли и OAuth-токены в эту страницу не передаются.</small></main>
 <script>
@@ -16,13 +16,15 @@ async function request(path,data){const r=await fetch(path,{method:data?'POST':'
 function event(type,extra={}){request('/player/event',{type,revision,...extra}).catch(()=>{});}
 window.onYouTubeIframeAPIReady=()=>{player=new YT.Player('player',{width:'960',height:'540',playerVars:{origin:location.origin,controls:1,playsinline:1},events:{onReady:()=>{ready=true},onStateChange:e=>{if(e.data===YT.PlayerState.ENDED)event('ended')},onError:e=>{status.textContent='YouTube: видео недоступно ('+e.data+'). Выберите другой трек.';event('error',{code:e.data})},onAutoplayBlocked:()=>{status.textContent='Нажмите Play в YouTube-плеере.'}}})};
 document.getElementById('connect').onclick=()=>{enabled=true;status.textContent='Подключено. Выберите YouTube-видео в Minecraft.';if(ready&&latest)apply(latest)};
-document.getElementById('volume').oninput=e=>{if(ready)player.setVolume(Number(e.target.value))};
+
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&ready)player.pauseVideo()});
 function apply(s){if(!ready||!enabled)return;if(!s.active||s.provider!=='youtube'){player.pauseVideo();return}if(document.hidden){player.pauseVideo();return}
 const seconds=(s.position+(s.paused?0:Math.max(0,s.serverNow-s.receivedAt)))/1000;
 if(s.id!==current||s.revision!==revision){current=s.id;revision=s.revision;player.cueVideoById({videoId:s.id,startSeconds:seconds});status.textContent=s.title||'YouTube';}
-if(s.volume!==lastVolume){lastVolume=s.volume;player.setVolume(s.volume*100);document.getElementById('volume').value=s.volume*100}
+lastVolume=s.volume;document.getElementById('volume').value=s.volume*100;
 const state=player.getPlayerState();if(state!==YT.PlayerState.BUFFERING&&Math.abs(player.getCurrentTime()-seconds)>2.5)player.seekTo(seconds,true);
 if(s.paused)player.pauseVideo();else if(state!==YT.PlayerState.PLAYING&&state!==YT.PlayerState.BUFFERING)player.playVideo();}
 setInterval(async()=>{if(polling)return;polling=true;try{latest=await request('/player/state');apply(latest)}catch(e){if(ready)player.pauseVideo();status.textContent='Minecraft или помощник отключён.'}finally{polling=false}},1000);
 </script><script src="https://www.youtube.com/iframe_api"></script></html>
+
+<script>let audibleGain=0;setInterval(()=>{if(ready&&lastVolume>=0){audibleGain+=(lastVolume*100-audibleGain)*.3;player.setVolume(audibleGain<.01?0:audibleGain)}},50);</script>

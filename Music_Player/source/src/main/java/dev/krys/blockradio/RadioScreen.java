@@ -14,7 +14,10 @@ import java.util.*;
 public class RadioScreen extends Screen {
  private int left,top,w=280,h=112,offset,dragging,tab,source,requestId,page;
  private boolean drawer,busy;
+ private String accountSnapshot="";
+ @Override public void tick(){if(drawer&&tab==4&&!accountSnapshot.equals(BlockRadio.accounts.toString())){accountSnapshot=BlockRadio.accounts.toString();initScreen();}}
  private long opened;
+ private float uiScale=1;
  private TextFieldWidget query;
  private String search="",message="",youtubePage="";
  private java.util.List<Track> tracks=java.util.List.of();
@@ -23,6 +26,9 @@ public class RadioScreen extends Screen {
  public RadioScreen(BlockPos ignored,boolean mini){this(ignored);}
  private void button(String label,int x,int y,int width,Runnable click){addDrawableChild(ButtonWidget.builder(Text.literal(label),b->click.run()).dimensions(x,y,width,18).build());}
  @Override protected void init(){
+  int actualW=client.getWindow().getScaledWidth(),actualH=client.getWindow().getScaledHeight();
+  uiScale=drawer?Math.min(1,Math.min(actualW/416f,actualH/320f)):1;
+  width=(int)(actualW/uiScale);height=(int)(actualH/uiScale);
   w=Math.min(280,width-12);left=(width-w)/2;top=drawer?Math.max(6,(height-310)/2):(height-h)/2;
   if(drawer)left=Math.min(width-w-6,Math.max(130,left));
   button(drawer?"×":"☰",left+w-27,top+5,22,()->{drawer=!drawer;opened=System.nanoTime();initScreen();});
@@ -71,6 +77,7 @@ public class RadioScreen extends Screen {
  }
  static void drawHud(DrawContext d,MinecraftClient mc){player(d,mc,8,8,210,true);}
  @Override public void render(DrawContext d,int mx,int my,float delta){
+  d.getMatrices().push();d.getMatrices().scale(uiScale,uiScale,1);mx=(int)(mx/uiScale);my=(int)(my/uiScale);
   player(d,client,left,top,w,false);
   if(drawer){int slide=(int)(124*Math.min(1,(System.nanoTime()-opened)/180000000.0));d.fill(left-slide,top,left-3,top+204,0xf21a202a);text(d,"Музыка",left-117,top+8,112,0xff70d9b4);
    d.fill(left,top+h+2,left+w,listTop()+rows()*34+5,0xf21a202a);
@@ -80,17 +87,17 @@ public class RadioScreen extends Screen {
   }
   int vx=left+w-111;d.fill(vx,top+83,left+w-42,top+87,0xff3c485d);d.fill(vx,top+83,vx+(int)(69*BlockRadio.volume),top+87,0xff70d9b4);
   text(d,!BackendManager.ready?BackendManager.status:message.isEmpty()?BlockRadio.status:message,left+8,top+99,w-16,0xffdcb98b);
-  super.render(d,mx,my,delta);
+  super.render(d,mx,my,delta);d.getMatrices().pop();
  }
  static String format(long ms){long s=ms/1000;return s/60+":"+String.format("%02d",s%60);}
- @Override public boolean mouseClicked(double x,double y,int button){if(super.mouseClicked(x,y,button))return true;if(button!=0)return false;
+ @Override public boolean mouseClicked(double x,double y,int button){x/=uiScale;y/=uiScale;if(super.mouseClicked(x,y,button))return true;if(button!=0)return false;
   if(y>=top+69&&y<=top+80&&x>=left+8&&x<=left+w-8){dragging=1;slider(x);return true;}
   if(y>=top+81&&y<=top+94&&x>=left+w-111&&x<=left+w-42){dragging=2;slider(x);return true;}
   if(drawer&&tab!=4&&y>=listTop()&&y<listTop()+rows()*34&&x>=left+7&&x<left+w-7){int i=offset+(int)(y-listTop())/34;var list=visible();if(i<list.size()){if(x>left+w-28){if(tab==3)BlockRadio.removeQueue(i);else BlockRadio.command("enqueue",list.get(i));}else BlockRadio.command("play",list.get(i));return true;}}return false;
  }
  private void slider(double x){if(dragging==1&&BlockRadio.current!=null)BlockRadio.seek((long)(BlockRadio.current.duration()*Math.max(0,Math.min(1,(x-left-8)/(w-16)))));if(dragging==2)BlockRadio.setVolume((x-(left+w-111))/69);}
- @Override public boolean mouseDragged(double x,double y,int b,double dx,double dy){if(dragging!=0){slider(x);return true;}return super.mouseDragged(x,y,b,dx,dy);}
- @Override public boolean mouseReleased(double x,double y,int b){dragging=0;return super.mouseReleased(x,y,b);}
+ @Override public boolean mouseDragged(double x,double y,int b,double dx,double dy){x/=uiScale;y/=uiScale;dx/=uiScale;dy/=uiScale;if(dragging!=0){slider(x);return true;}return super.mouseDragged(x,y,b,dx,dy);}
+ @Override public boolean mouseReleased(double x,double y,int b){x/=uiScale;y/=uiScale;dragging=0;return super.mouseReleased(x,y,b);}
  @Override public boolean mouseScrolled(double x,double y,double amount){if(drawer)offset=Math.max(0,Math.min(Math.max(0,visible().size()-rows()),offset-(int)Math.signum(amount)));return true;}
  @Override public boolean keyPressed(int key,int scan,int mods){if(key==257&&tab==0&&drawer){fetch();return true;}return super.keyPressed(key,scan,mods);}
  @Override public void removed(){requestId++;}
