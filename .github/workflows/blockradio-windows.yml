@@ -40,13 +40,16 @@ jobs:
         run: |
           import zipfile
           from pathlib import Path
-          jar = Path('Music_Player/source/build/libs/blockradio-0.3.0.jar')
+          jar = Path('Music_Player/source/build/libs/blockradio-0.4.0.jar')
           with zipfile.ZipFile(jar) as z:
               assert z.read('backend/blockradio-backend.exe')[:2] == b'MZ'
+      - name: Clean-install test from release JAR without Python on PATH
+        working-directory: Music_Player/bridge
+        run: python smoke_windows.py
       - uses: actions/upload-artifact@v4
         with:
-          name: BlockRadio-0.3.0-Windows
+          name: BlockRadio-0.4.0-Windows
           path: |
-            Music_Player/source/build/libs/blockradio-0.3.0.jar
+            Music_Player/source/build/libs/blockradio-0.4.0.jar
             Music_Player/bridge/dist/blockradio-backend.exe
           if-no-files-found: error

@@ -10,13 +10,28 @@ import time
 from urllib.request import Request,urlopen
 import psutil
 
-exe=Path('dist/blockradio-backend.exe').resolve()
+import sys
+import zipfile
+# Exercise the exact embedded release payload in an empty installation directory.
+jar=Path('../source/build/libs/blockradio-0.4.0.jar')
+extracted=tempfile.TemporaryDirectory()
+if jar.exists():
+    with zipfile.ZipFile(jar) as archive:
+        payload=archive.read('backend/blockradio-backend.exe')
+    assert payload[:2]==b'MZ'
+    exe=Path(extracted.name)/'blockradio-backend.exe'
+    exe.write_bytes(payload)
+else:
+    exe=Path('dist/blockradio-backend.exe').resolve()
 with tempfile.TemporaryDirectory() as folder:
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     key=secrets.token_urlsafe(48)
     env=dict(os.environ,BLOCKRADIO_SESSION_KEY=key)
-    p=subprocess.Popen([str(exe),'--port',str(port),'--data-dir',folder],env=env)
+    env['PATH']=str(Path(os.environ['SystemRoot'])/'System32')
+    for name in ('PYTHONPATH','PYTHONHOME','VIRTUAL_ENV'):
+        env.pop(name,None)
+    p=subprocess.Popen([str(exe),'--port',str(port),'--data-dir',folder],env=env,cwd=folder)
     children=[]
     def request(path,post=False):
         req=Request(f'http://127.0.0.1:{port}'+path,headers={'X-BlockRadio-Key':key},data=b'{}' if post else None)

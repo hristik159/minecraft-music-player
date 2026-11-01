@@ -88,13 +88,8 @@ class YouTubeProvider:
         self._session = self.store.load() or {}
 
     def _client(self):
-        try:
-            config = json.loads(self.credentials_path.read_text(encoding='utf-8'))['installed']
-            if config['client_id'] != CLIENT_ID:
-                raise ValueError()
-            return {'client_id': CLIENT_ID, 'client_secret': config['client_secret']}
-        except (OSError, ValueError, KeyError, TypeError):
-            raise ProviderError('Select the local Desktop client_secret.json for this project.') from None
+        # Desktop public client: PKCE + loopback, no distributed confidential secret.
+        return {'client_id': CLIENT_ID}
 
     def _save_token(self, result):
         scope = result.get('scope')

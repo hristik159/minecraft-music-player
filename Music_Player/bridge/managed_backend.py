@@ -112,20 +112,6 @@ class Service:
             if not self.youtube:
                 self.youtube = YouTubeProvider(self.data_dir / 'client_secret.json')
             self.yt()
-            if not self.youtube.credentials_path.exists():
-                # Native file selection happens on the helper worker, not the game thread.
-                import tkinter
-                from tkinter.filedialog import askopenfilename
-                root = tkinter.Tk(); root.withdraw(); root.attributes('-topmost', True)
-                try:
-                    selected = askopenfilename(title='Выберите Google Desktop client_secret.json', filetypes=[('Google OAuth JSON', '*.json')])
-                finally:
-                    root.destroy()
-                if not selected:
-                    raise ProviderError('Выбор файла отменён.')
-                self.youtube.credentials_path = Path(selected)
-                self.youtube._client()  # Validate before remembering the local path.
-                self.data_dir.joinpath('google-path.txt').write_text(selected, encoding='utf-8')
             self.youtube.login()
             self.youtube_status = dict(state='ready', **self.youtube.profile())
         except Exception as e:
@@ -136,9 +122,6 @@ class Service:
     def yt(self):
         if not self.youtube:
             raise ProviderError('Войдите в YouTube.')
-        saved = self.data_dir / 'google-path.txt'
-        if saved.exists():
-            self.youtube.credentials_path = Path(saved.read_text(encoding='utf-8'))
         return self.youtube
 
     def tracks(self, source, query, page=0, liked=False, youtube_page=""):

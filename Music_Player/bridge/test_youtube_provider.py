@@ -115,10 +115,11 @@ class YouTubeTests(unittest.TestCase):
         with self.assertRaises(LoginRequired):
             p._token()
 
-    def test_wrong_client_rejected(self):
+    def test_public_client_needs_no_local_credentials(self):
         self.path.write_text('{"installed":{"client_id":"wrong"}}')
-        with self.assertRaises(ProviderError):
-            self.provider(None)._client()
+        self.assertEqual({'client_id': CLIENT_ID}, self.provider(None)._client())
+        self.path.unlink()
+        self.assertEqual({'client_id': CLIENT_ID}, self.provider(None)._client())
 
 
 if __name__ == '__main__':

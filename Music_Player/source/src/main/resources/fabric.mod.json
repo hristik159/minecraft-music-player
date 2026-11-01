@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "blockradio",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "name": "BlockRadio",
   "description": "Shared Yandex and visible YouTube player",
   "environment": "*",

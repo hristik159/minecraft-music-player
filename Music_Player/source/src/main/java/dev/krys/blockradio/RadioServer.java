@@ -15,7 +15,7 @@ public class RadioServer implements ModInitializer {
  static final ArrayDeque<Track> queue=new ArrayDeque<>(),history=new ArrayDeque<>();
  static long base,started,revision;
  static boolean paused,autoplay=true,requesting;
- static UUID controller;
+ static UUID controller,sourcePlayerUUID;
  static int ticks;
  static final Map<UUID,Long> lastCommand=new HashMap<>();
  static long position(){return base+(paused?0:(System.nanoTime()-started)/1000000);}
@@ -36,7 +36,7 @@ public class RadioServer implements ModInitializer {
     long now=System.nanoTime();boolean automatic=Set.of("ended","recommend","unavailable").contains(action);
     if(!automatic){if(now-lastCommand.getOrDefault(player.getUuid(),0L)<80000000)return;lastCommand.put(player.getUuid(),now);}
     switch(action){
-     case "play" -> {play(Track.parse(j.getAsJsonObject("track")),true);controller=player.getUuid();}
+     case "play" -> {play(Track.parse(j.getAsJsonObject("track")),true);controller=player.getUuid();sourcePlayerUUID=player.getUuid();}
      case "enqueue" -> {if(queue.size()<100)queue.addLast(Track.parse(j.getAsJsonObject("track")));}
      case "pause" -> {if(current!=null&&!paused){base=position();paused=true;}}
      case "resume" -> {if(current!=null&&paused){started=now;paused=false;}}
@@ -44,6 +44,7 @@ public class RadioServer implements ModInitializer {
      case "next" -> {controller=player.getUuid();if(!requesting)next();}
      case "previous" -> {if(!history.isEmpty()){if(current!=null&&queue.size()<100)queue.addFirst(current);play(history.removeLast(),false);}}
      case "autoplay" -> {autoplay=j.get("enabled").getAsBoolean();if(!autoplay&&requesting){requesting=false;revision++;}}
+     case "remove" -> {int index=j.get("index").getAsInt();if(index>=0&&index<queue.size()){var list=new ArrayList<>(queue);list.remove(index);queue.clear();queue.addAll(list);}}
      case "clear" -> queue.clear();
      case "stop" -> {current=null;requesting=false;revision++;}
      case "ended" -> {if(player.getUuid().equals(controller)&&current!=null&&!requesting&&j.get("revision").getAsLong()==revision){if(autoplay)next();else{base=position();paused=true;}}}
@@ -59,12 +60,12 @@ public class RadioServer implements ModInitializer {
    // End detection is supplied by the actual local player (YouTube may buffer/show ads).
    for(var p:server.getPlayerManager().getPlayerList())send(p);
   });
-  ServerLifecycleEvents.SERVER_STOPPED.register(server->{current=null;queue.clear();history.clear();controller=null;lastCommand.clear();ticks=0;autoplay=true;paused=false;requesting=false;revision=0;});
+  ServerLifecycleEvents.SERVER_STOPPED.register(server->{current=null;queue.clear();history.clear();controller=null;sourcePlayerUUID=null;lastCommand.clear();ticks=0;autoplay=true;paused=false;requesting=false;revision=0;});
   ServerPlayConnectionEvents.DISCONNECT.register((handler,server)->lastCommand.remove(handler.player.getUuid()));
  }
  static void send(ServerPlayerEntity p){
   if(!ServerPlayNetworking.canSend(p,CHANNEL))return;
-  JsonObject j=new JsonObject();j.addProperty("active",current!=null);j.addProperty("revision",revision);j.addProperty("position",current==null?0:position());j.addProperty("paused",paused);j.addProperty("autoplay",autoplay);j.addProperty("recommend",requesting&&p.getUuid().equals(controller));j.addProperty("controller",p.getUuid().equals(controller));
+  JsonObject j=new JsonObject();j.addProperty("sourcePlayerUUID",sourcePlayerUUID==null?"":sourcePlayerUUID.toString());j.addProperty("active",current!=null);j.addProperty("revision",revision);j.addProperty("position",current==null?0:position());j.addProperty("paused",paused);j.addProperty("autoplay",autoplay);j.addProperty("recommend",requesting&&p.getUuid().equals(controller));j.addProperty("controller",p.getUuid().equals(controller));
   if(current!=null)j.add("track",current.json());JsonArray q=new JsonArray();queue.forEach(t->q.add(t.json()));j.add("queue",q);
   var b=PacketByteBufs.create();b.writeString(j.toString(),262144);ServerPlayNetworking.send(p,CHANNEL,b);
  }
