@@ -17,7 +17,8 @@ public class RadioScreen extends Screen {
  private String search="",message="";
  private java.util.List<Track> tracks=java.util.List.of();
  private boolean busy;
- private int requestId;
+ private int requestId,page;
+ private String youtubePage="";
  private final String[] tabs={"Поиск","Моя музыка","Моя волна","Очередь","Аккаунты"};
  private final String[] sources={"all","yandex","youtube"};
  public RadioScreen(BlockPos ignored){this(ignored,false);}
@@ -29,7 +30,8 @@ public class RadioScreen extends Screen {
   else{
    int tw=(w-20)/5;for(int i=0;i<5;i++){final int index=i;button(tabs[i],left+10+i*tw,top+9,tw-3,()->{tab=index;offset=0;requestId++;busy=false;initScreen();if(tab==1||tab==2)fetch();});}
    if(tab==0||tab==1){int sw=(w-20)/3;String[] labels={"Все","Яндекс","YouTube"};for(int i=0;i<3;i++){final int index=i;button((source==i?"● ":"")+labels[i],left+10+i*sw,top+35,sw-3,()->{source=index;initScreen();if(tab==1)fetch();});}}
-   if(tab==0){query=new TextFieldWidget(textRenderer,left+10,top+62,w-92,20,Text.literal("Поиск музыки"));query.setMaxLength(160);query.setText(search);addDrawableChild(query);button("Найти",left+w-76,top+62,66,()->fetch());}
+   if(tab==0){query=new TextFieldWidget(textRenderer,left+10,top+62,w-164,20,Text.literal("Поиск музыки"));query.setMaxLength(160);query.setText(search);addDrawableChild(query);button("Найти",left+w-148,top+62,66,()->fetch());button("Ещё",left+w-76,top+62,66,()->fetch(true));}
+   if(tab==1)button("Загрузить ещё",left+10,top+62,w-20,()->fetch(true));
    if(tab==2)button("Получить трек Моей волны",left+10,top+40,w-20,this::fetch);
    if(tab==3)button("Очистить очередь",left+10,top+40,w-20,()->BlockRadio.command("clear",null));
    if(tab==4){int cardW=(w-30)/2;for(int i=0;i<2;i++){final String provider=i==0?"yandex":"youtube";int x=left+10+i*(cardW+10);button("Войти",x+8,top+122,(cardW-24)/2,()->BlockRadio.action("/login",provider));button("Выйти",x+16+(cardW-24)/2,top+122,(cardW-24)/2,()->BlockRadio.action("/logout",provider));}}
@@ -40,12 +42,16 @@ public class RadioScreen extends Screen {
   if(!mini)button("Стоп",left+241,y,45,()->BlockRadio.command("stop",null));
  }
  private void initScreen(){if(query!=null)search=query.getText();query=null;clearChildren();init();}
- private void fetch(){if(busy)return;if(!BackendManager.ready){message=BackendManager.status;return;}if(query!=null)search=query.getText().trim();if(tab==0&&search.isEmpty())return;
+ private void fetch(){fetch(false);}
+ private void fetch(boolean append){if(busy)return;if(!BackendManager.ready){message=BackendManager.status;return;}if(query!=null)search=query.getText().trim();if(tab==0&&search.isEmpty())return;
+  if(!append){page=0;youtubePage="";}else page++;
   String route=tab==2?"/wave":tab==1?"/liked?source="+sources[source]:"/search?source="+sources[source]+"&q="+URLEncoder.encode(search,StandardCharsets.UTF_8);
+  if(tab!=2)route+="&page="+page+"&youtube_page="+URLEncoder.encode(youtubePage,StandardCharsets.UTF_8);
+  final String requestRoute=route;
   busy=true;message="Загрузка…";int job=++requestId;
-  BlockRadio.background("search",()->{try{JsonObject result=BlockRadio.get(route);ArrayList<Track> list=new ArrayList<>();for(var item:result.getAsJsonArray("tracks"))list.add(Track.parse(item.getAsJsonObject()));client.execute(()->{if(job!=requestId)return;tracks=java.util.List.copyOf(list);BlockRadio.candidates=tracks;offset=0;message=result.has("message")?result.get("message").getAsString():"";busy=false;});}catch(Exception e){client.execute(()->{if(job==requestId){busy=false;message=e.getMessage();}});}});
+  BlockRadio.background("search",()->{try{JsonObject result=BlockRadio.get(requestRoute);ArrayList<Track> list=new ArrayList<>(append?tracks:java.util.List.of());for(var item:result.getAsJsonArray("tracks"))list.add(Track.parse(item.getAsJsonObject()));client.execute(()->{if(job!=requestId)return;tracks=list.stream().distinct().toList();BlockRadio.candidates=tracks;if(!append)offset=0;if(result.has("youtube_next"))youtubePage=result.get("youtube_next").getAsString();message=result.has("message")?result.get("message").getAsString():"";busy=false;});}catch(Exception e){client.execute(()->{if(job==requestId){busy=false;message=e.getMessage();}});}});
  }
- private int listTop(){return top+(tab==0?90:68);}
+ private int listTop(){return top+(tab==0||tab==1?90:68);}
  private int rows(){return Math.max(0,(top+h-120-listTop())/44);}
  private java.util.List<Track> visible(){return tab==3?BlockRadio.queue:tracks;}
  private void cover(DrawContext d,String url,int x,int y,int size){d.fill(x,y,x+size,y+size,0xff2b3543);var id=CoverCache.get(url);if(id!=null)d.drawTexture(id,x,y,0,0,size,size,size,size);else d.drawTextWithShadow(textRenderer,"♪",x+size/2-3,y+size/2-4,0xff70d9b4);}

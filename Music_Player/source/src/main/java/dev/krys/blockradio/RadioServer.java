@@ -32,8 +32,9 @@ public class RadioServer implements ModInitializer {
   ServerPlayNetworking.registerGlobalReceiver(CHANNEL,(server,player,handler,buf,sender)->{
    String raw=buf.readString(32767);
    server.execute(()->{try{
-    long now=System.nanoTime();if(now-lastCommand.getOrDefault(player.getUuid(),0L)<80000000)return;lastCommand.put(player.getUuid(),now);
     JsonObject j=JsonParser.parseString(raw).getAsJsonObject();String action=Track.s(j,"action");
+    long now=System.nanoTime();boolean automatic=Set.of("ended","recommend","unavailable").contains(action);
+    if(!automatic){if(now-lastCommand.getOrDefault(player.getUuid(),0L)<80000000)return;lastCommand.put(player.getUuid(),now);}
     switch(action){
      case "play" -> {play(Track.parse(j.getAsJsonObject("track")),true);controller=player.getUuid();}
      case "enqueue" -> {if(queue.size()<100)queue.addLast(Track.parse(j.getAsJsonObject("track")));}
@@ -42,7 +43,7 @@ public class RadioServer implements ModInitializer {
      case "seek" -> {if(current!=null){base=Math.max(0,Math.min(current.duration()>0?current.duration():86400000,j.get("position").getAsLong()));started=now;}}
      case "next" -> {controller=player.getUuid();if(!requesting)next();}
      case "previous" -> {if(!history.isEmpty()){if(current!=null&&queue.size()<100)queue.addFirst(current);play(history.removeLast(),false);}}
-     case "autoplay" -> autoplay=j.get("enabled").getAsBoolean();
+     case "autoplay" -> {autoplay=j.get("enabled").getAsBoolean();if(!autoplay&&requesting){requesting=false;revision++;}}
      case "clear" -> queue.clear();
      case "stop" -> {current=null;requesting=false;revision++;}
      case "ended" -> {if(player.getUuid().equals(controller)&&current!=null&&!requesting&&j.get("revision").getAsLong()==revision){if(autoplay)next();else{base=position();paused=true;}}}

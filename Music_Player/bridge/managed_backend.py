@@ -15,7 +15,7 @@ from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 import server as legacy
-from youtube_provider import YouTubeProvider, ProviderError
+from youtube_provider import YouTubeProvider, ProviderError, LoginRequired
 
 POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
@@ -51,7 +51,7 @@ class Service:
         self.last_heartbeat = time.monotonic()
         self.browser_key = secrets.token_urlsafe(32)
         self.base = ''
-        self.yandex_generation = 0
+        self.yandex_profile = {}
         self.wave_batch = None
         self.wave_lock = threading.Lock()
         self.wave_pending = []
@@ -59,9 +59,11 @@ class Service:
         self.wave_batches = {}
         self.wave_playing = None
         self.wave_started = 0
+        self.wave_state = {}
 
     def init(self):
         legacy.restore()
+        self.refresh_yandex_profile()
         try:
             self.youtube = YouTubeProvider(self.data_dir / 'client_secret.json')
             self.yt()
@@ -77,11 +79,30 @@ class Service:
             if account:
                 ya['name'] = getattr(account, 'display_name', '') or getattr(account, 'login', '') or 'Яндекс'
                 ya['avatar'] = getattr(account, 'avatar_url', '') or ''
+        ya.update(self.yandex_profile if ya['state']=='ready' else {})
         return {'yandex': ya, 'youtube': dict(self.youtube_status)}
 
     def login_yandex(self):
         # Legacy flow displays a device code in the browser, never in Minecraft.
         legacy.login_worker()
+        with self.wave_lock:
+            self.wave_pending.clear(); self.wave_batches.clear(); self.wave_last = None; self.wave_playing = None
+        self.refresh_yandex_profile()
+
+    def refresh_yandex_profile(self):
+        if legacy.auth.get('state') != 'ready':
+            return
+        try:
+            from urllib.request import Request, urlopen
+            request = Request('https://login.yandex.ru/info?format=json', headers={'Authorization': 'OAuth ' + legacy.client.token})
+            with urlopen(request, timeout=10) as response:
+                info = json.load(response)
+            avatar = str(info.get('default_avatar_id', ''))
+            self.yandex_profile = {'name': info.get('display_name') or info.get('login') or 'Яндекс'}
+            if avatar and re.fullmatch(r'[A-Za-z0-9_/-]+', avatar):
+                self.yandex_profile['avatar'] = 'https://avatars.yandex.net/get-yapic/' + avatar + '/islands-200'
+        except Exception:
+            pass
 
     def login_youtube(self):
         if not self.yt_lock.acquire(blocking=False):
@@ -120,7 +141,8 @@ class Service:
             self.youtube.credentials_path = Path(saved.read_text(encoding='utf-8'))
         return self.youtube
 
-    def tracks(self, source, query, page=0, liked=False):
+    def tracks(self, source, query, page=0, liked=False, youtube_page=""):
+        next_pages = {}
         def ya():
             legacy.ensure_session()
             with legacy.API_LOCK:
@@ -131,10 +153,13 @@ class Service:
                 else:
                     result = legacy.client.search(query, type_='track', page=page)
                     tracks = result.tracks.results if result and result.tracks else []
+                next_pages["yandex_more"] = len(tracks) >= 20
                 return [yandex_track(t) for t in tracks]
         def yt():
-            # YouTube pagination uses opaque tokens, passed separately by the GUI later.
-            result = self.yt().liked_tracks() if liked else self.yt().search(query)
+            if youtube_page == "__end__":
+                return []
+            result = self.yt().liked_tracks(youtube_page) if liked else self.yt().search(query, youtube_page)
+            next_pages["youtube_next"] = result.get("nextPageToken") or "__end__"
             return [youtube_track(t) for t in result.get('items', [])]
         selected = [('yandex', ya), ('youtube', yt)] if source == 'all' else [(source, ya if source == 'yandex' else yt)]
         futures = [(name, POOL.submit(fn)) for name, fn in selected]
@@ -142,9 +167,12 @@ class Service:
         for name, future in futures:
             try:
                 items.extend(future.result(timeout=50))
+            except LoginRequired:
+                self.youtube_status = {"state": "not_logged_in"}
+                errors.append("youtube: войдите в аккаунт")
             except Exception:
                 errors.append(name + ': недоступно; проверьте вход, сеть и квоту')
-        return {'tracks': items, 'message': '; '.join(errors)}
+        return dict(tracks=items, message='; '.join(errors), **next_pages)
 
     def wave(self):
         legacy.ensure_session()
@@ -168,15 +196,18 @@ class Service:
     def wave_feedback(self, state):
         track_id = state.get('id') if state.get('active') and state.get('provider') == 'yandex' else None
         with self.wave_lock:
+            previous_state = self.wave_state
+            self.wave_state = dict(state)
             if track_id == self.wave_playing:
                 return
             previous = self.wave_playing
-            elapsed = max(0, time.monotonic()-self.wave_started)
+            elapsed = max(0, previous_state.get('position', 0)/1000)
             self.wave_playing = track_id
             self.wave_started = time.monotonic()
             events = []
             if previous in self.wave_batches:
-                events.append(('trackFinished', previous, elapsed))
+                finished = previous_state.get('duration_ms', 0)>0 and elapsed*1000 >= previous_state['duration_ms']-2500
+                events.append(('trackFinished' if finished else 'skip', previous, elapsed))
             if track_id in self.wave_batches:
                 events.append(('trackStarted', track_id, 0))
             for kind, tid, seconds in events:
@@ -238,7 +269,7 @@ class Handler(legacy.Handler):
                 if source not in ('all', 'yandex', 'youtube'):
                     raise ValueError()
                 query = args.get('q', [''])[0][:160]
-                return self.reply(200, s.tracks(source, query, liked=route.path == '/liked'))
+                return self.reply(200, s.tracks(source, query, page=max(0,min(100,int(args.get('page',['0'])[0]))), liked=route.path == '/liked', youtube_page=args.get('youtube_page',[''])[0][:2000]))
             if route.path == '/wave':
                 return self.reply(200, {'tracks': [s.wave()]})
             if route.path == '/audio':
@@ -288,6 +319,8 @@ class Handler(legacy.Handler):
                         with legacy.API_LOCK:
                             legacy.client = legacy.Client()
                             legacy.saved_session = {}
+                            s.yandex_profile = {}
+                            s.wave_pending.clear(); s.wave_batches.clear(); s.wave_last = None; s.wave_playing = None
                             legacy.auth.clear(); legacy.auth['state'] = 'not_logged_in'
                     finally:
                         legacy.AUTH_LOCK.release()

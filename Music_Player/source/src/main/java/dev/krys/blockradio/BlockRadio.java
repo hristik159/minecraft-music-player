@@ -38,7 +38,7 @@ public class BlockRadio implements ClientModInitializer {
   JsonObject j=new JsonObject();j.addProperty("action",action);j.addProperty("revision",revision);if(track!=null)j.add("track",track.json());send(j);
  }
  static void send(JsonObject j){var mc=MinecraftClient.getInstance();mc.execute(()->{if(mc.getNetworkHandler()!=null&&ClientPlayNetworking.canSend(RadioServer.CHANNEL)){var b=net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();b.writeString(j.toString(),32767);ClientPlayNetworking.send(RadioServer.CHANNEL,b);}});}
- static void seek(long position){JsonObject j=new JsonObject();j.addProperty("action","seek");j.addProperty("position",position);send(j);}
+ static void seek(long position){endedRevision=-1;JsonObject j=new JsonObject();j.addProperty("action","seek");j.addProperty("position",position);send(j);}
  static void toggleAutoplay(){JsonObject j=new JsonObject();j.addProperty("action","autoplay");j.addProperty("enabled",!autoplay);send(j);}
  static void action(String route,String provider){background("action",()->{try{JsonObject j=new JsonObject();j.addProperty("provider",provider);BackendManager.post(route,j);refreshAccounts();}catch(Exception e){status=e.getMessage();}});}
  static void refreshAccounts(){try{accounts=get("/accounts");}catch(Exception e){status=e.getMessage();}}
@@ -78,7 +78,7 @@ public class BlockRadio implements ClientModInitializer {
  });}
  public static void onVideoEnded(long rev){MinecraftClient.getInstance().execute(()->{if(current!=null&&current.provider().equals("youtube")&&controller&&rev==revision&&endedRevision!=rev){endedRevision=rev;command("ended",null);}});}
  static void pushVideo(){if(!BackendManager.ready||videoUpdate)return;videoUpdate=true;
-  JsonObject j=new JsonObject();Track t=current;j.addProperty("active",t!=null);if(t!=null){j.addProperty("provider",t.provider());j.addProperty("id",t.id());j.addProperty("title",t.title());}j.addProperty("revision",revision);j.addProperty("position",target());j.addProperty("paused",paused);j.addProperty("volume",volume);
+  JsonObject j=new JsonObject();Track t=current;j.addProperty("active",t!=null);if(t!=null){j.addProperty("provider",t.provider());j.addProperty("id",t.id());j.addProperty("title",t.title());j.addProperty("duration_ms",t.duration());}j.addProperty("revision",revision);j.addProperty("position",target());j.addProperty("paused",paused);j.addProperty("volume",volume);
   background("video",()->{try{BackendManager.post("/player/state",j);}catch(Exception ignored){}finally{videoUpdate=false;}});
  }
  static synchronized void stop(){generation++;loading=false;if(clip!=null){clip.stop();clip.close();clip=null;}}

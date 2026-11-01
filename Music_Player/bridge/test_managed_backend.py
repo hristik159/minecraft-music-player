@@ -72,4 +72,17 @@ class ManagedTests(unittest.TestCase):
         self.assertEqual(result['duration_ms'],3723000)
         self.assertEqual(result['title'],'A & B')
 
+    def test_youtube_pagination_passes_opaque_cursor(self):
+        fake = NS(search=lambda query, cursor: {'items': [], 'nextPageToken': 'next'})
+        self.service.youtube = fake
+        with patch.object(fake, 'search', wraps=fake.search) as search:
+            result = self.service.tracks('youtube', 'music', youtube_page='opaque')
+            search.assert_called_once_with('music', 'opaque')
+        self.assertEqual(result['youtube_next'], 'next')
+
+    def test_exhausted_youtube_list_does_not_spend_quota(self):
+        fake = NS(search=lambda *a: self.fail('No more pages'))
+        self.service.youtube = fake
+        self.assertEqual(self.service.tracks('youtube', 'music', youtube_page='__end__')['tracks'], [])
+
 if __name__=='__main__': unittest.main()
