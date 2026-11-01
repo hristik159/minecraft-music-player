@@ -45,7 +45,7 @@ public class RadioServer implements ModInitializer {
      case "autoplay" -> autoplay=j.get("enabled").getAsBoolean();
      case "clear" -> queue.clear();
      case "stop" -> {current=null;requesting=false;revision++;}
-     case "ended" -> {if(player.getUuid().equals(controller)&&current!=null&&!requesting&&j.get("revision").getAsLong()==revision)next();}
+     case "ended" -> {if(player.getUuid().equals(controller)&&current!=null&&!requesting&&j.get("revision").getAsLong()==revision){if(autoplay)next();else{base=position();paused=true;}}}
      case "recommend" -> {if(requesting&&player.getUuid().equals(controller)&&j.get("revision").getAsLong()==revision)play(Track.parse(j.getAsJsonObject("track")),true);}
      case "unavailable" -> {if(requesting&&player.getUuid().equals(controller)&&j.get("revision").getAsLong()==revision){current=null;requesting=false;revision++;}}
      default -> {return;}

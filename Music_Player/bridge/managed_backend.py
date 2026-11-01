@@ -56,6 +56,9 @@ class Service:
         self.wave_lock = threading.Lock()
         self.wave_pending = []
         self.wave_last = None
+        self.wave_batches = {}
+        self.wave_playing = None
+        self.wave_started = 0
 
     def init(self):
         legacy.restore()
@@ -119,6 +122,7 @@ class Service:
 
     def tracks(self, source, query, page=0, liked=False):
         def ya():
+            legacy.ensure_session()
             with legacy.API_LOCK:
                 if liked:
                     collection = legacy.client.users_likes_tracks()
@@ -143,6 +147,7 @@ class Service:
         return {'tracks': items, 'message': '; '.join(errors)}
 
     def wave(self):
+        legacy.ensure_session()
         with self.wave_lock, legacy.API_LOCK:
             if not self.wave_pending:
                 response = legacy.client.rotor_station_tracks('user:onyourwave', queue=self.wave_last)
@@ -154,7 +159,34 @@ class Service:
                 raise ProviderError('Моя волна не вернула треков.')
             t = self.wave_pending.pop(0)
             self.wave_last = str(t.id)
+            self.wave_batches[self.wave_last] = self.wave_batch
+            if len(self.wave_batches)>32:
+                del self.wave_batches[next(iter(self.wave_batches))]
             return yandex_track(t)
+
+
+    def wave_feedback(self, state):
+        track_id = state.get('id') if state.get('active') and state.get('provider') == 'yandex' else None
+        with self.wave_lock:
+            if track_id == self.wave_playing:
+                return
+            previous = self.wave_playing
+            elapsed = max(0, time.monotonic()-self.wave_started)
+            self.wave_playing = track_id
+            self.wave_started = time.monotonic()
+            events = []
+            if previous in self.wave_batches:
+                events.append(('trackFinished', previous, elapsed))
+            if track_id in self.wave_batches:
+                events.append(('trackStarted', track_id, 0))
+            for kind, tid, seconds in events:
+                try:
+                    with legacy.API_LOCK:
+                        legacy.client.rotor_station_feedback('user:onyourwave', kind,
+                            batch_id=self.wave_batches[tid], track_id=tid,
+                            total_played_seconds=seconds, from_='blockradio')
+                except Exception:
+                    pass  # Feedback failure must not interrupt playback.
 
 
 class Handler(legacy.Handler):
@@ -255,12 +287,14 @@ class Handler(legacy.Handler):
                                 keyring.delete_password('BlockRadio-Yandex',key)
                         with legacy.API_LOCK:
                             legacy.client = legacy.Client()
+                            legacy.saved_session = {}
                             legacy.auth.clear(); legacy.auth['state'] = 'not_logged_in'
                     finally:
                         legacy.AUTH_LOCK.release()
             elif path == '/player/state':
                 with s.player_lock:
                     s.player = dict(data, receivedAt=time.time()*1000)
+                s.wave_feedback(data)
             elif path == '/player/open':
                 webbrowser.open(s.base + '/player#' + s.browser_key)
             elif path == '/shutdown':
@@ -273,6 +307,8 @@ class Handler(legacy.Handler):
 
 
 def main():
+    from windows_job import contain_children
+    contain_children()
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, required=True)
     parser.add_argument('--data-dir', required=True)

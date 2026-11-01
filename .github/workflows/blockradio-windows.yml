@@ -2,7 +2,7 @@ name: BlockRadio Windows package
 on:
   pull_request:
   push:
-    branches: [main, codex/youtube-account-foundation]
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,15 +23,18 @@ jobs:
         with:
           gradle-version: '8.8'
       - name: Install backend build dependencies
-        run: python -m pip install -r Music_Player/bridge/requirements.txt pyinstaller==6.11.1
+        run: python -m pip install -r Music_Player/bridge/requirements.txt pyinstaller==6.11.1 psutil==6.1.1
       - name: Python regression tests
         run: python -m unittest discover -s Music_Player/bridge -v
       - name: Package standalone GUI-subsystem backend
         working-directory: Music_Player/bridge
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name blockradio-backend --collect-all imageio_ffmpeg --hidden-import keyring.backends.Windows --add-data "youtube_player.html;." managed_backend.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name blockradio-backend --collect-all imageio_ffmpeg --collect-all keyring --hidden-import keyring.backends.Windows --add-data "youtube_player.html;." managed_backend.py
+      - name: Smoke-test packaged Windows executable
+        working-directory: Music_Player/bridge
+        run: python smoke_windows.py
       - name: Build Fabric JAR with bundled backend
         working-directory: Music_Player/source
-        run: gradle build --no-daemon
+        run: ./gradlew.bat build --no-daemon
       - name: Verify embedded EXE
         shell: python
         run: |
