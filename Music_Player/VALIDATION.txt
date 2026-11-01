@@ -1,0 +1,9 @@
+BlockRadio 0.2.0 validation
+- Gradle 8.8 / Java 17 build and remap: PASS.
+- Minecraft 1.20.1, Fabric Loader 0.19.3, Fabric API 0.92.2+1.20.1.
+- Standalone Java distance checks: PASS (near, midpoint, boundary, far, monotonic).
+- Python bridge tests: 3 PASS (includes login link checks).
+- JAR common/client entrypoints and mixin namespace/refmap: PASS.
+- No two-client Minecraft session or real Yandex playback was run here.
+- Dedicated server runtime startup was not tested.
+- One active station per server, personal Yandex access required for each listener.
