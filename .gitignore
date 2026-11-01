@@ -35,3 +35,9 @@ venv/
 Thumbs.db
 desktop.ini
 
+
+# Packaged helper and local account paths
+dist/
+*.spec
+google-path.txt
+backend.lock

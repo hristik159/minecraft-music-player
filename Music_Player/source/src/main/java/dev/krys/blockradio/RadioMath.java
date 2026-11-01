@@ -8,3 +8,4 @@ public final class RadioMath {
   return linear*linear;
  }
 }
+

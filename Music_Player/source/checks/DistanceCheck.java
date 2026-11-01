@@ -14,3 +14,4 @@ public class DistanceCheck {
   System.out.println("Distance checks passed: near, midpoint, boundary, far, monotonic falloff.");
  }
 }
+
