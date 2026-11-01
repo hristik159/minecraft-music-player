@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.*
+*.token
+secrets.json
+config/secrets.json
+
+# Java / Gradle
+build/
+.gradle/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Minecraft runtime
+run/
+logs/
+crash-reports/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
