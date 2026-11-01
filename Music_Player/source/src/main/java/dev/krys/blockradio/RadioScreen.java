@@ -15,7 +15,7 @@ public class RadioScreen extends Screen {
  private int left,top,w=280,h=112,offset,dragging,tab,source,requestId,page;
  private boolean drawer,busy;
  private String accountSnapshot="";
- @Override public void tick(){if(drawer&&tab==4&&!accountSnapshot.equals(BlockRadio.accounts.toString())){accountSnapshot=BlockRadio.accounts.toString();initScreen();}}
+ @Override public void tick(){for(var child:children())if(child instanceof ButtonWidget b){String label=b.getMessage().getString();if(label.equals(">")||label.equals("||"))b.setMessage(Text.literal(BlockRadio.paused?">":"||"));if(label.startsWith("Auto "))b.setMessage(Text.literal(BlockRadio.autoplay?"Auto ON":"Auto OFF"));}if(drawer&&tab==4&&!accountSnapshot.equals(BlockRadio.accounts.toString())){accountSnapshot=BlockRadio.accounts.toString();initScreen();}}
  private long opened;
  private float uiScale=1;
  private TextFieldWidget query;

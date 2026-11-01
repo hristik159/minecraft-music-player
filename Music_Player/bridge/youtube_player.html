@@ -25,6 +25,5 @@ lastVolume=s.volume;document.getElementById('volume').value=s.volume*100;
 const state=player.getPlayerState();if(state!==YT.PlayerState.BUFFERING&&Math.abs(player.getCurrentTime()-seconds)>2.5)player.seekTo(seconds,true);
 if(s.paused)player.pauseVideo();else if(state!==YT.PlayerState.PLAYING&&state!==YT.PlayerState.BUFFERING)player.playVideo();}
 setInterval(async()=>{if(polling)return;polling=true;try{latest=await request('/player/state');apply(latest)}catch(e){if(ready)player.pauseVideo();status.textContent='Minecraft или помощник отключён.'}finally{polling=false}},1000);
+let audibleGain=0;setInterval(()=>{if(ready&&lastVolume>=0){audibleGain+=(lastVolume*100-audibleGain)*.3;player.setVolume(audibleGain<.01?0:audibleGain)}},50);
 </script><script src="https://www.youtube.com/iframe_api"></script></html>
-
-<script>let audibleGain=0;setInterval(()=>{if(ready&&lastVolume>=0){audibleGain+=(lastVolume*100-audibleGain)*.3;player.setVolume(audibleGain<.01?0:audibleGain)}},50);</script>
